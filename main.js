@@ -13,10 +13,13 @@ var mod_events = require('events');
 var mod_fs = require('fs');
 var mod_fsm = require('mooremachine');
 var mod_bunyan = require('bunyan');
+var mod_mkdirp = require('mkdirp');
 var mod_moray = require('moray');
 var mod_morayfilter = require('moray-filter');
+var mod_path = require('path');
 var mod_sqlite = require('sqlite3');
 var mod_util = require('util');
+var mod_vasync = require('vasync');
 
 var BATCH_SIZE = 100;
 
@@ -34,7 +37,7 @@ var MAX_SHRIMP = 3;
  * Hence, the TOP string is the maximum possible '_key' of any
  * instruction object.
  */
-var TOP = '/' + POSEIDON_UUID + '/stor/manta_gc/mako/' + MAX_SHRIMP + '.stor.' + DOMAIN + '/~';
+var TOP = '/' + POSEIDON_UUID + '/stor/manta_gc/mako/' + MAX_SHRIMP + '.stor.' + DOMAIN + '/' + ('~'.repeat(125));
 var BOTTOM = '/' + POSEIDON_UUID + '/stor/manta_gc/mako/' + MIN_SHRIMP + '.stor.' + DOMAIN;
 
 function MakoGcFeeder(opts)
@@ -46,12 +49,36 @@ function MakoGcFeeder(opts)
 	this.f_nameservice = ['nameservice', DOMAIN].join('.');
 	this.f_batch_size = BATCH_SIZE;
 	this.f_morayclient = null;
+
+	/*
+	 * Filter to be used for the next findobjects.
+	 */
 	this.f_morayfilter = null;
+
+	/*
+	 * Delay between findobjects rpcs.
+	 */
 	this.f_delay = 5000;
+
+	/*
+	 * Last path seen by the program.
+	 */
 	this.f_numLastSeen = 0;
 
+	/*
+	 * Total number of paths seen by the program.
+	 */
+	this.f_numseen = 0;
+	this.f_numwritten = 0;
+
+	/*
+	 * SQLite db used to store stream position.
+	 */
 	this.f_db = new mod_sqlite.Database('mako_gc_feeder.db');
 
+	/*
+	 * Range of possible _key s.
+	 */
 	this.f_start = BOTTOM;
 	this.f_end = TOP;
 
@@ -68,61 +95,76 @@ function MakoGcFeeder(opts)
 };
 mod_util.inherits(MakoGcFeeder, mod_fsm.FSM);
 
+MakoGcFeeder.prototype.updateMorayFilter = function ()
+{
+	var self = this;
+	/*
+	 * Set up moray filter for findobjects.
+	 */
+	var filter = new mod_morayfilter.AndFilter();
+	filter.addFilter(new mod_morayfilter.GreaterThanEqualsFilter({
+		attribute: '_key',
+		value: self.f_start
+	}));
+	filter.addFilter(new mod_morayfilter.LessThanEqualsFilter({
+		attribute: '_key',
+		value: self.f_end
+	}));
+	self.f_morayfilter = filter.toString();
+};
+
 MakoGcFeeder.prototype.state_init = function (S)
 {
 	var self = this;
 
-	/*
-	 * Check for the existence of the stream_position table.
-	 */
-	self.f_db.get('SELECT name FROM sqlite_master WHERE type=? AND name=?',
-	    ['table', 'stream_position'], function (err, present) {
-		if (err) {
-			self.f_log.error('Error checking for stream_position table ' +
-				'\'%s\'', err);
-		}
+	self.updateMorayFilter();
 
-		/*
-		 * If the table is present, resume listing at the last path that
-		 * was written to the stream position.
-		 */
-		if (present !== undefined) {
+	mod_vasync.pipeline({ funcs: [
+		function createDatabase(_, next) {
+			self.f_db.run('CREATE TABLE IF NOT EXISTS stream_position ' +
+			    '(timestamp TEXT, marker TEXT)', next);
+		},
+		function checkForPreviousRun(_, next) {
 			self.f_db.get('SELECT * FROM stream_position', function (serr, row) {
 				if (serr) {
 					self.f_log.error('Error reading from stream position ' +
 					    'table: \'%s\'', serr);
+					next(serr);
+					return;
 				}
-				if (row === undefined || row['marker'] === undefined) {
+				if (row !== undefined && !row.hasOwnProperty('marker')) {
 					self.f_log.error('Found stream_position table, but ' +
-					    'missing marker path');
-					process.exit(1);
+					    'missing marker path. This is unexpected.');
+					next(new Error('unexpected condition'));
+					return;
 				}
-				self.f_start = row['marker'] || TOP;
-				self.f_log.info('Found marker from previous run. Resuming at ' +
-				    '\'%s\'', self.f_start);
+				if (row === undefined) {
+					self.f_db.run('INSERT INTO stream_position VALUES (?, ?)',
+					    [(new Date()).toISOString(), self.f_start]);
+				}
+
+				self.f_start = (row !== undefined) ? row['marker'] || BOTTOM : BOTTOM;
+				if (row !== undefined && row.hasOwnProperty('marker')) {
+					self.f_log.info('Found marker from previous run. Resuming at ' +
+					    '\'%s\'', self.f_start);
+				}
+				next();
 			});
-		} else {
-			self.f_db.run('INSERT INTO stream_position VALUES (?, ?)',
-				[(new Date()).toISOString(), self.f_start]);
+		},
+		function createListingDirectories(_, next) {
+			mod_mkdirp([TMPDIR, self.f_shard].join('/'), function (err) {
+				self.f_morayclient.on('connect', function () {
+					self.f_log.debug('Moray client connected.');
+					next();
+				});
+			});
 		}
-	});
-
-	self.f_db.run('CREATE TABLE IF NOT EXISTS stream_position (timestamp TEXT, marker TEXT)');
-
-	/*
-	 * Create the temporary directory with the following hierarchy:
-	 *
-	 * /var/tmp/mako_gc_inputs/SHARD_SRV_DOMAIN/
-	 *
-	 * The files in these directories are named for the manta_storage_ids to
-	 * which the corresponding instructions should be uploaded. Chunking
-	 * these files is left up to the operator.
-	 */
-	mod_fs.mkdir([TMPDIR, self.f_shard].join('/'), function (err) {
-		self.f_morayclient.on('connect', function () {
-			self.f_log.debug('Moray client connected.');
-			S.gotoState('running');
-		});
+	] }, function (err) {
+		if (err) {
+			self.f_log.error('Error initializing: \'%s\'', err);
+			process.exit(1);
+		}
+		S.gotoState('running');
 	});
 }
 
@@ -131,10 +173,8 @@ MakoGcFeeder.prototype.state_running = function (S)
 	var self = this;
 
 	self.readChunk(function (err) {
-		/*
-		 * Exhausted instruction objects stored on this shard.
-		 */
-		if (self.f_numLastSeen == 0) {
+		if (self.f_numLastSeen === -1) {
+			self.f_log.info('Finished reading instruction objects.');
 			S.gotoState('done');
 			return;
 		}
@@ -146,6 +186,8 @@ MakoGcFeeder.prototype.state_running = function (S)
 
 MakoGcFeeder.prototype.state_done = function (S)
 {
+	var self = this;
+
 	self.f_log.info('Finished listing instruction objects.');
 	self.f_db.close();
 	process.exit(0);
@@ -160,61 +202,92 @@ function extractStorageId(path)
 	return (path.split('/')[5]);
 }
 
-MakoGcFeeder.prototype.writeToListing = function (path, cb)
+MakoGcFeeder.prototype.writeToListing = function (path)
 {
 	var self = this;
-
-	var file = [TMPDIR, self.f_shard, extractStorageId(path)].join('/');
 
 	self.f_db.run('UPDATE stream_position SET timestamp = ?, marker = ?',
 	    [(new Date()).toISOString(), path]);
 
-	mod_fs.appendFile(file, path + '\n', function (err) {
-		if (err) {
-			self.f_log.error('Error writing file \'%s\': \'%s\'',
-			    file, err);
-		}
-		cb();
-	});
+	var file = [TMPDIR, self.f_shard, extractStorageId(path)].join('/');
+	var err = mod_fs.appendFileSync(file, path + '\n');
+	if (err) {
+		return (err);
+	}
+
+	self.f_numwritten++;
+
+	/*
+	 * Advance our marker.
+	 */
+	if (self.f_start < path) {
+		self.f_start = path;
+	}
+
+	/*
+	 * Update moray filter for future findObjects.
+	 */
+	self.updateMorayFilter();
 };
 
 MakoGcFeeder.prototype.readChunk = function (cb) {
 	var self = this;
-	var lastSeen;
-	var numSeen = 0;
+	var seen = {};
 
-	var query = mod_util.format('SELECT * FROM manta WHERE' +
-	    ' _key >= \'%s\' AND _key < \'%s\' AND type = \'object\';',
-	    self.f_start, self.f_end);
-
-	self.f_log.info(query);
-
-	var req = self.f_morayclient.sql(query, {
+	var findOpts = {
 		limit: self.f_batch_size,
+		sort: {
+			attribute: '_key',
+			order: 'ASC'
+		},
 		no_count: true
-	});
+	}
+	var req = self.f_morayclient.findObjects('manta', self.f_morayfilter,
+	    findOpts);
 
 	req.on('record', function (record) {
-		self.f_log.debug('Found record \'%s\'', record._key);
-		self.writeToListing(record._key, function () {
-			lastSeen = record._key;
-			numSeen++;
-		});
+		var key = record.key;
+
+		self.f_numLastSeen++;
+		self.f_numseen++;
+
+		if (seen.hasOwnProperty(key)) {
+			self.f_log.warn('Recieved duplicate key \'%s\'', key);
+		}
+		seen[key] = true;
+
+		var err = self.writeToListing(key);
+		if (err) {
+			self.f_log.error('Error writing to listing \'%s\'', key);
+			return;
+		}
 	});
 
 	req.on('error', function (err) {
-		self.f_log.error('Error listing records: %s', err);
+		self.f_log.error('Error listing records: \'%s\'', err);
 		cb(err);
 	});
 
 	req.once('end', function () {
-		if (numSeen == 0) {
+		if (self.f_numLastSeen === 0) {
 			self.f_log.info('No records remaining.');
+			cb();
 			return;
 		}
-		self.f_log.info('Done. Read %d records.', numSeen);
-		self.f_start = lastSeen;
-		self.f_numLastSeen = numSeen;
+		self.f_log.info('Records seen: %d, Records seen cumulative: %d, ' +
+		    'Records written cumulative: %d', self.f_numLastSeen,
+		    self.f_numseen, self.f_numwritten);
+
+		/*
+		 * Indicate to the caller that we have reached the end of the
+		 * stream if we received 0 records. Otherwise, reset the counter
+		 * for the next run.
+		 */
+		if (self.f_numLastSeen === 0) {
+			self.f_numLastSeen = -1;
+		} else {
+			self.f_numLastSeen = 0;
+		}
 		cb();
 	});
 };

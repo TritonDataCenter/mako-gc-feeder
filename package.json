@@ -8,12 +8,14 @@
   },
   "dependencies": {
     "assert-plus": "1.0.0",
+    "mkdirp": "0.5.1",
     "bunyan": "1.8.12",
     "libmanta": "1.1.1",
     "mooremachine": "2.2.1",
     "moray-filter": "1.0.0",
     "moray": "^3.5.0",
-    "sqlite3": "4.0.6"
+    "sqlite3": "4.0.6",
+    "vasync": "2.2.0"
   },
   "author": "jan.wyszynski",
   "license": "ISC"
