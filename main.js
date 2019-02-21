@@ -24,6 +24,7 @@ var mod_verror = require('verror');
 
 var VError = mod_verror.VError;
 
+var LOG;
 var DEFAULT_BATCH_SIZE = 10000;
 var INSTRUCTION_OBJECT_NAME_BYTE_LENGTH = 125;
 
@@ -32,6 +33,9 @@ function MakoGcFeeder(opts)
 	var self = this;
 
 	mod_assertplus.optionalNumber(opts.batch_size, 'opts.batch_size');
+	mod_assertplus.object(opts.log, 'opts.log');
+	mod_assertplus.string(opts.start, 'opts.start');
+	mod_assertplus.string(opts.end, 'opts.end');
 	mod_assertplus.string(opts.sapi_url, 'opts.sapi_url');
 	mod_assertplus.string(opts.shard_domain, 'opts.shard_domain');
 	mod_assertplus.string(opts.nameservice, 'opts.nameservice');
@@ -43,10 +47,7 @@ function MakoGcFeeder(opts)
 	this.f_stream_pos_db_dir = opts.stream_pos_db_dir;
 	this.f_poseidon_uuid = opts.poseidon_uuid;
 
-	this.f_log = mod_bunyan.createLogger({
-	    name: 'MakoGcFeeder',
-	    level: process.LOG_LEVEL || 'debug'
-	});
+	this.f_log = opts.log.child({ component: 'MakoGcFeeder-' + opts.shard });
 
 	this.f_shard = opts.shard_domain;
 	this.f_nameservice = opts.nameservice;
@@ -122,8 +123,8 @@ function MakoGcFeeder(opts)
 	/*
 	 * Range of possible _key s. See state_init.
 	 */
-	this.f_start = null;
-	this.f_end = null;
+	this.f_start = opts.start;
+	this.f_end = opts.end;
 
 	mod_fsm.FSM.call(this, 'init');
 };
@@ -152,111 +153,6 @@ MakoGcFeeder.prototype.state_init = function (S)
 	var self = this;
 
 	mod_vasync.pipeline({ funcs: [
-		function getStorageIdRange(_, next) {
-			var listOpts = {
-			    name: 'storage',
-			    include_master: true
-			}
-			self.f_sapi.listServices(listOpts, function (err, services) {
-				if (err) {
-					next(new VError('Unable to find storage ' +
-					    'service: \'%s\'', err));
-					return;
-				}
-				var storage_svc_uuids = services.map(function (service) {
-					return (service.uuid);
-				});
-				if (storage_svc_uuids.length === 0) {
-					next(new VError('No storage service found'));
-					return;
-				} else if (storage_svc_uuids.length > 1) {
-					next(new VError('Multiple storage services ' +
-					    'found'));
-					return;
-				}
-				self.f_storage_svc_uuid = storage_svc_uuids[0];
-				var listInstOpts = {
-					service_uuid: self.f_storage_svc_uuid,
-					include_master: true
-				};
-
-				self.f_sapi.listInstances(listInstOpts,
-				    function (err, instances) {
-					if (err) {
-						next(new VError('Error listing storage instances ' +
-						    '\'%s\'', err));
-						return;
-					}
-					self.f_storage_ids = instances.map(function (instance) {
-						return (instance.params.tags.manta_storage_id);
-					});
-					if (self.f_storage_ids.length === 0) {
-						next (new VError('No storage instances found!'));
-						return;
-					}
-					self.f_log.debug({
-						storage_ids: mod_util.inspect(
-						    self.f_storage_ids)
-					}, 'Found storage ids');
-					next();
-				});
-			});
-		},
-		/*
-		 * Having loaded this list of storage ids, we now determine the
-		 * storage node with the minimum and maximum storage identifier.
-		 * This is generally the first part of the manta_storage_id, as
-		 * in:
-		 *
-		 * 1.stor.DOMAIN_NAME, 1015.stor.DOMAIN_NAME
-		 *
-		 * There is nothing in Manta that enforces that storage nodes
-		 * are named with integer domain names, but it is a convention
-		 * that is used in all major Manta deployments.
-		 */
-		function setStorageIdBounds(_, next) {
-			var min = 0;
-			var max = 0;
-			for (var i = 0; i < self.f_storage_ids.length; i++) {
-				var storage_id = self.f_storage_ids[i];
-				var storage_no;
-				try {
-					storage_no = parseInt(storage_id.split('.')[0]);
-				} catch (e) {
-					next(new VError(err, 'Unable to parse numeric ' +
-					    'domain from \'%s\'', storage_id));
-					return;
-				}
-				if (storage_no < min || min === 0) {
-					self.f_storage_id_start = storage_id;
-					min = storage_no;
-				}
-				if (storage_no > max || max === 0) {
-					self.f_storage_id_end = storage_id;
-					max = storage_no;
-				}
-			}
-
-			self.f_start = ['', self.f_poseidon_uuid, 'stor',
-			    'manta_gc', 'mako', self.f_storage_id_start].join('/');
-			/*
-			 * The ASCII '~' compares greater than or equal to any
-			 * other ASCII character under PostgreSQL's lexical
-			 * comparison operator.
-			 */
-			self.f_end = ['', self.f_poseidon_uuid, 'stor',
-			    'manta_gc', 'mako', self.f_storage_id_end,
-			    '~'.repeat(INSTRUCTION_OBJECT_NAME_BYTE_LENGTH)].join('/');
-
-			self.updateMorayFilter();
-
-			self.f_log.debug({
-			    start: self.f_start,
-			    end: self.f_end
-			}, 'Set Moray findObjects range');
-
-			next();
-		},
 		function createStreamDbTmpDirs(_, next) {
 			mod_mkdirp(self.f_stream_pos_db_dir, next);
 		},
@@ -310,7 +206,6 @@ MakoGcFeeder.prototype.state_init = function (S)
 
 				self.f_start = row['marker'] || self.f_start;
 
-				self.updateMorayFilter();
 				next();
 			});
 		},
@@ -463,15 +358,15 @@ MakoGcFeeder.prototype.appendToListingFile = function (path)
 	if (self.f_start < path) {
 		self.f_start = path;
 	}
-
-	/*
-	 * Update moray filter for future now that our bounds are updated.
-	 */
-	self.updateMorayFilter();
 };
 
 MakoGcFeeder.prototype.readChunk = function (cb) {
 	var self = this;
+
+	/*
+	 * Make sure we've got the most up-to-date bounds.
+	 */
+	self.updateMorayFilter();
 
 	var findOpts = {
 		limit: self.f_batch_size,
@@ -522,6 +417,11 @@ function main()
 	var file = mod_path.join('etc', 'config.json');
 	var feeders = {};
 
+	LOG = mod_bunyan.createLogger({
+	    name: 'Main',
+	    level: process.LOG_LEVEL || 'info'
+	});
+
 	mod_fs.readFile(file, function (err, data) {
 		if (err) {
 			throw (err);
@@ -539,18 +439,142 @@ function main()
 		mod_assertplus.string(opts.instruction_list_dir, 'opts.instruction_list_dir');
 		mod_assertplus.string(opts.stream_pos_db_dir, 'opts.stream_pos_db_dir');
 
-		opts.shards.forEach(function (shard) {
-			mod_assertplus.string(shard.host, 'shard.host');
-			var options = {
-				batch_size: opts.batch_size,
-				sapi_url: opts.sapi_url,
-				shard_domain: shard.host,
-				nameservice: opts.nameservice,
-				poseidon_uuid: opts.poseidon_uuid,
-				instruction_list_dir: opts.instruction_list_dir,
-				stream_pos_db_dir: opts.stream_pos_db_dir
-			};
-			feeders[shard.host] = new MakoGcFeeder(options);
+		opts.log = LOG;
+
+		/*
+		 * SAPI client to determine the range of storage ids we're listing
+		 * instructions for.
+		 */
+		var sapi = new mod_sdc.SAPI({
+			url: opts.sapi_url,
+			log: LOG.child({ component: 'sapi' }),
+			agent: false,
+			version: '*'
+		});
+
+		mod_vasync.pipeline({ arg: opts, funcs: [
+			function getStorageIdRange(arg, next) {
+				var listOpts = {
+				    name: 'storage',
+				    include_master: true
+				}
+				sapi.listServices(listOpts, function (err, services) {
+					if (err) {
+						next(new VError('Unable to find storage ' +
+						    'service: \'%s\'', err));
+						return;
+					}
+					var storage_svc_uuids = services.map(function (service) {
+						return (service.uuid);
+					});
+					if (storage_svc_uuids.length === 0) {
+						next(new VError('No storage service found'));
+						return;
+					} else if (storage_svc_uuids.length > 1) {
+						next(new VError('Multiple storage services ' +
+						    'found'));
+						return;
+					}
+					arg.storage_svc_uuid = storage_svc_uuids[0];
+					var listInstOpts = {
+						service_uuid: arg.storage_svc_uuid,
+						include_master: true
+					};
+
+					sapi.listInstances(listInstOpts,
+					    function (err, instances) {
+						if (err) {
+							next(new VError('Error listing storage instances ' +
+							    '\'%s\'', err));
+							return;
+						}
+						arg.storage_ids = instances.map(function (instance) {
+							return (instance.params.tags.manta_storage_id);
+						});
+						if (arg.storage_ids.length === 0) {
+							next (new VError('No storage instances found!'));
+							return;
+						}
+						LOG.debug({
+							storage_ids: mod_util.inspect(
+							    arg.storage_ids)
+						}, 'Found storage ids');
+						next();
+					});
+				});
+			},
+			/*
+			 * Having loaded this list of storage ids, we now determine the
+			 * storage node with the minimum and maximum storage identifier.
+			 * This is generally the first part of the manta_storage_id, as
+			 * in:
+			 *
+			 * 1.stor.DOMAIN_NAME, 1015.stor.DOMAIN_NAME
+			 *
+			 * There is nothing in Manta that enforces that storage nodes
+			 * are named with integer domain names, but it is a convention
+			 * that is used in all major Manta deployments.
+			 */
+			function setStorageIdBounds(arg, next) {
+				var min = 0;
+				var max = 0;
+				for (var i = 0; i < arg.storage_ids.length; i++) {
+					var storage_id = arg.storage_ids[i];
+					var storage_no;
+					try {
+						storage_no = parseInt(storage_id.split('.')[0]);
+					} catch (e) {
+						next(new VError(err, 'Unable to parse numeric ' +
+						    'domain from \'%s\'', storage_id));
+						return;
+					}
+					if (storage_no < min || min === 0) {
+						arg.storage_id_start = storage_id;
+						min = storage_no;
+					}
+					if (storage_no > max || max === 0) {
+						arg.storage_id_end = storage_id;
+						max = storage_no;
+					}
+				}
+
+				arg.start = ['', arg.poseidon_uuid, 'stor',
+				    'manta_gc', 'mako', arg.storage_id_start].join('/');
+				/*
+				 * The ASCII '~' compares greater than or equal to any
+				 * other ASCII character under PostgreSQL's lexical
+				 * comparison operator.
+				 */
+				arg.end = ['', arg.poseidon_uuid, 'stor',
+				    'manta_gc', 'mako', arg.storage_id_end,
+				    '~'.repeat(INSTRUCTION_OBJECT_NAME_BYTE_LENGTH)].join('/');
+
+				next();
+			}
+		] }, function (err) {
+			if (err) {
+				throw (err);
+			}
+
+			mod_assertplus.string(opts.start, 'opts.start');
+			mod_assertplus.string(opts.end, 'opts.end');
+
+			opts.shards.forEach(function (shard) {
+				mod_assertplus.string(shard.host, 'shard.host');
+				var options = {
+					log: opts.log,
+					batch_size: opts.batch_size,
+					sapi_url: opts.sapi_url,
+					shard_domain: shard.host,
+					nameservice: opts.nameservice,
+					poseidon_uuid: opts.poseidon_uuid,
+					start: opts.start,
+					end: opts.end,
+					instruction_list_dir: opts.instruction_list_dir,
+					stream_pos_db_dir: opts.stream_pos_db_dir
+				};
+				feeders[shard.host] = new MakoGcFeeder(options);
+			});
 		});
 	});
 }
