@@ -214,7 +214,7 @@ MakoGcFeeder.prototype.state_init = function (S)
 		 * are named with integer domain names, but it is a convention
 		 * that is used in all major Manta deployments.
 		 */
-		function setBounds(_, next) {
+		function setStorageIdBounds(_, next) {
 			var min = 0;
 			var max = 0;
 			for (var i = 0; i < self.f_storage_ids.length; i++) {
@@ -305,10 +305,12 @@ MakoGcFeeder.prototype.state_init = function (S)
 					return;
 				} else {
 					self.f_log.info('Resuming scan from previous ' +
-					    'run at \'%s\'', self.f_start);
+					    'run at \'%s\'', row['marker']);
 				}
 
 				self.f_start = row['marker'] || self.f_start;
+
+				self.updateMorayFilter();
 				next();
 			});
 		},
@@ -470,7 +472,6 @@ MakoGcFeeder.prototype.appendToListingFile = function (path)
 
 MakoGcFeeder.prototype.readChunk = function (cb) {
 	var self = this;
-	var seen = {};
 
 	var findOpts = {
 		limit: self.f_batch_size,
@@ -481,6 +482,7 @@ MakoGcFeeder.prototype.readChunk = function (cb) {
 		no_count: true
 	};
 
+	self.f_numLastSeen = 0;
 	var req = self.f_morayclient.findObjects('manta', self.f_morayfilter,
 	    findOpts);
 
