@@ -15,7 +15,8 @@
     "moray-filter": "1.0.0",
     "moray": "^3.5.0",
     "sqlite3": "4.0.6",
-    "vasync": "2.2.0"
+    "vasync": "2.2.0",
+    "verror": "1.10.0"
   },
   "author": "jan.wyszynski",
   "license": "ISC"
