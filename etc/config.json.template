@@ -1,5 +1,5 @@
 {
-    "batch_size": 100000,
+    "batch_size": 10000,
     "sapi_url": "http://sapi.coal-1.example.com",
     "nameservice": "nameservice.orbit.example.com",
     "shards": [
