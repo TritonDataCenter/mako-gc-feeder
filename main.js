@@ -27,6 +27,7 @@ var VError = mod_verror.VError;
 var LOG;
 var DEFAULT_BATCH_SIZE = 10000;
 var INSTRUCTION_OBJECT_NAME_BYTE_LENGTH = 125;
+var INSTRUCTION_OBJECT_NUM_COMPONENTS = 6;
 
 function MakoGcFeeder(opts)
 {
@@ -91,7 +92,7 @@ function MakoGcFeeder(opts)
 	/*
 	 * Delay between findobjects rpcs.
 	 */
-	this.f_delay = 5000;
+	this.f_delay = 0;
 
 	/*
 	 * For each storage_id we find in Moray, we save a descriptor object
@@ -308,7 +309,27 @@ MakoGcFeeder.prototype.state_done = function (S)
  */
 function extractStorageId(path)
 {
-	return (path.split('/')[5]);
+	// Subtract 1 to account for leading '/'.
+	return (path.split('/')[INSTRUCTION_OBJECT_NUM_COMPONENTS - 2]);
+}
+
+/*
+ * Non-instruction objects may fall within the key range:
+ *
+ * /POSEIDON_UUID/stor/manta_gc/mako/2.stor.orbit.example.com
+ *
+ * is an example (assuming the Manta has a 1.stor.orbit.example.com). We don't
+ * want these _keys to be included, so we check that the paths we're writing to
+ * the listing have a full 6 components.
+ *
+ * We could also potentially filter out non-instruction objects by using a
+ * filter on the Moray 'type' column, but it may be preferable to minimize our
+ * use of PostgreSQL indices in this program.
+ */
+function ensureInstructionObject(path)
+{
+	// Subtract 1 to account for the leading '/'.
+	return (path.split('/').length - 1 === INSTRUCTION_OBJECT_NUM_COMPONENTS);
 }
 
 MakoGcFeeder.prototype.checkpoint = function ()
@@ -322,6 +343,11 @@ MakoGcFeeder.prototype.appendToListingFile = function (path)
 {
 	var self = this;
 	var storage_id = extractStorageId(path);
+
+	if (!ensureInstructionObject(path)) {
+		self.f_log.warn('Omitting non-object _key \'%s\'', path);
+		return;
+	}
 
 	var file = [self.f_instruction_list_dir, self.f_shard, storage_id].join('/');
 
@@ -538,8 +564,15 @@ function main()
 					}
 				}
 
+				/*
+				 * Make sure to terminate this string with '/',
+				 * otherwise we might pull in
+				 * /poseidon/stor/manta_gc/mako/1.stor.orbit.example.com,
+				 * which is not necessarily stored on the same
+				 * shard as the instruction objects are.
+				 */
 				arg.start = ['', arg.poseidon_uuid, 'stor',
-				    'manta_gc', 'mako', arg.storage_id_start].join('/');
+				    'manta_gc', 'mako', arg.storage_id_start, ''].join('/');
 				/*
 				 * The ASCII '~' compares greater than or equal to any
 				 * other ASCII character under PostgreSQL's lexical
