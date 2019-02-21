@@ -14,6 +14,7 @@
     "mooremachine": "2.2.1",
     "moray-filter": "1.0.0",
     "moray": "^3.5.0",
+    "sdc-clients": "12.2.0",
     "sqlite3": "4.0.6",
     "vasync": "2.2.0",
     "verror": "1.10.0"

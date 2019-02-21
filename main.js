@@ -15,6 +15,7 @@ var mod_bunyan = require('bunyan');
 var mod_mkdirp = require('mkdirp');
 var mod_moray = require('moray');
 var mod_morayfilter = require('moray-filter');
+var mod_sdc = require('sdc-clients');
 var mod_path = require('path');
 var mod_sqlite = require('sqlite3');
 var mod_util = require('util');
@@ -24,34 +25,27 @@ var mod_verror = require('verror');
 var VError = mod_verror.VError;
 
 var DEFAULT_BATCH_SIZE = 10000;
-
-/*
- * These variables must be set on a per-deployment basis.
- */
-var POSEIDON_UUID = 'ff30b6ca-566a-e73e-9b74-911b9fe9db45';
-var DOMAIN = 'orbit.example.com';
-var INSTRUCTIONS_DIR = '/var/tmp/mako_gc_instructions';
-var STREAMS_DB_DIR = '/var/tmp/mako_gc_streams_dbs';
-var MIN_SHRIMP = 1;
-var MAX_SHRIMP = 3;
-
-/*
- * The ASCII character '~' compares highest against all others.
- * Hence, the TOP string is the maximum possible '_key' of any
- * instruction object.
- */
-var TOP = '/' + POSEIDON_UUID + '/stor/manta_gc/mako/' + MAX_SHRIMP + '.stor.' + DOMAIN + '/' + ('~'.repeat(125));
-var BOTTOM = '/' + POSEIDON_UUID + '/stor/manta_gc/mako/' + MIN_SHRIMP + '.stor.' + DOMAIN;
+var INSTRUCTION_OBJECT_NAME_BYTE_LENGTH = 125;
 
 function MakoGcFeeder(opts)
 {
+	var self = this;
+
 	mod_assertplus.optionalNumber(opts.batch_size, 'opts.batch_size');
+	mod_assertplus.string(opts.sapi_url, 'opts.sapi_url');
 	mod_assertplus.string(opts.shard_domain, 'opts.shard_domain');
 	mod_assertplus.string(opts.nameservice, 'opts.nameservice');
+	mod_assertplus.string(opts.poseidon_uuid, 'opts.poseidon_uuid');
+	mod_assertplus.string(opts.instruction_list_dir, 'opts.instruction_list_dir');
+	mod_assertplus.string(opts.stream_pos_db_dir, 'opts.stream_pos_db_dir');
+
+	this.f_instruction_list_dir = opts.instruction_list_dir;
+	this.f_stream_pos_db_dir = opts.stream_pos_db_dir;
+	this.f_poseidon_uuid = opts.poseidon_uuid;
 
 	this.f_log = mod_bunyan.createLogger({
 	    name: 'MakoGcFeeder',
-	    level: process.LOG_LEVEL || 'info'
+	    level: process.LOG_LEVEL || 'debug'
 	});
 
 	this.f_shard = opts.shard_domain;
@@ -61,7 +55,27 @@ function MakoGcFeeder(opts)
 	/*
 	 * Moray client used by this feeder. Each has exactly one.
 	 */
-	this.f_morayclient = null;
+	this.f_morayclient = mod_moray.createClient({
+	    log: self.f_log.child({
+		component: 'MorayClient-' + self.f_shard,
+	    }),
+	    srvDomain: self.f_shard,
+	    cueballOptions: {
+		resolvers: [ self.f_nameservice ],
+		defaultPort: 2020
+	    }
+	});
+
+	/*
+	 * SAPI client to determine the range of storage ids we're listing
+	 * instructions for.
+	 */
+	this.f_sapi = new mod_sdc.SAPI({
+		url: opts.sapi_url,
+		log: this.f_log.child({ component: 'sapi' }),
+		agent: false,
+		version: '*'
+	});
 
 	/*
 	 * The last error seen by this feeder.
@@ -100,29 +114,16 @@ function MakoGcFeeder(opts)
 	 * SQLite db used to store stream position.
 	 */
 	this.f_db_path = [
-	    STREAMS_DB_DIR,
+	    this.f_stream_pos_db_dir,
 	    this.f_shard + '-stream_position.db'
 	].join('/');
 	this.f_db = null;
 
 	/*
-	 * Range of possible _key s.
+	 * Range of possible _key s. See state_init.
 	 */
-	this.f_start = BOTTOM;
-	this.f_end = TOP;
-
-	var self = this;
-
-	this.f_morayclient = mod_moray.createClient({
-	    log: self.f_log.child({
-		component: 'MorayClient-' + self.f_shard,
-	    }),
-	    srvDomain: self.f_shard,
-	    cueballOptions: {
-		resolvers: [ self.f_nameservice ],
-		defaultPort: 2020
-	    }
-	});
+	this.f_start = null;
+	this.f_end = null;
 
 	mod_fsm.FSM.call(this, 'init');
 };
@@ -151,8 +152,113 @@ MakoGcFeeder.prototype.state_init = function (S)
 	var self = this;
 
 	mod_vasync.pipeline({ funcs: [
+		function getStorageIdRange(_, next) {
+			var listOpts = {
+			    name: 'storage',
+			    include_master: true
+			}
+			self.f_sapi.listServices(listOpts, function (err, services) {
+				if (err) {
+					next(new VError('Unable to find storage ' +
+					    'service: \'%s\'', err));
+					return;
+				}
+				var storage_svc_uuids = services.map(function (service) {
+					return (service.uuid);
+				});
+				if (storage_svc_uuids.length === 0) {
+					next(new VError('No storage service found'));
+					return;
+				} else if (storage_svc_uuids.length > 1) {
+					next(new VError('Multiple storage services ' +
+					    'found'));
+					return;
+				}
+				self.f_storage_svc_uuid = storage_svc_uuids[0];
+				var listInstOpts = {
+					service_uuid: self.f_storage_svc_uuid,
+					include_master: true
+				};
+
+				self.f_sapi.listInstances(listInstOpts,
+				    function (err, instances) {
+					if (err) {
+						next(new VError('Error listing storage instances ' +
+						    '\'%s\'', err));
+						return;
+					}
+					self.f_storage_ids = instances.map(function (instance) {
+						return (instance.params.tags.manta_storage_id);
+					});
+					if (self.f_storage_ids.length === 0) {
+						next (new VError('No storage instances found!'));
+						return;
+					}
+					self.f_log.debug({
+						storage_ids: mod_util.inspect(
+						    self.f_storage_ids)
+					}, 'Found storage ids');
+					next();
+				});
+			});
+		},
+		/*
+		 * Having loaded this list of storage ids, we now determine the
+		 * storage node with the minimum and maximum storage identifier.
+		 * This is generally the first part of the manta_storage_id, as
+		 * in:
+		 *
+		 * 1.stor.DOMAIN_NAME, 1015.stor.DOMAIN_NAME
+		 *
+		 * There is nothing in Manta that enforces that storage nodes
+		 * are named with integer domain names, but it is a convention
+		 * that is used in all major Manta deployments.
+		 */
+		function setBounds(_, next) {
+			var min = 0;
+			var max = 0;
+			for (var i = 0; i < self.f_storage_ids.length; i++) {
+				var storage_id = self.f_storage_ids[i];
+				var storage_no;
+				try {
+					storage_no = parseInt(storage_id.split('.')[0]);
+				} catch (e) {
+					next(new VError(err, 'Unable to parse numeric ' +
+					    'domain from \'%s\'', storage_id));
+					return;
+				}
+				if (storage_no < min || min === 0) {
+					self.f_storage_id_start = storage_id;
+					min = storage_no;
+				}
+				if (storage_no > max || max === 0) {
+					self.f_storage_id_end = storage_id;
+					max = storage_no;
+				}
+			}
+
+			self.f_start = ['', self.f_poseidon_uuid, 'stor',
+			    'manta_gc', 'mako', self.f_storage_id_start].join('/');
+			/*
+			 * The ASCII '~' compares greater than or equal to any
+			 * other ASCII character under PostgreSQL's lexical
+			 * comparison operator.
+			 */
+			self.f_end = ['', self.f_poseidon_uuid, 'stor',
+			    'manta_gc', 'mako', self.f_storage_id_end,
+			    '~'.repeat(INSTRUCTION_OBJECT_NAME_BYTE_LENGTH)].join('/');
+
+			self.updateMorayFilter();
+
+			self.f_log.debug({
+			    start: self.f_start,
+			    end: self.f_end
+			}, 'Set Moray findObjects range');
+
+			next();
+		},
 		function createStreamDbTmpDirs(_, next) {
-			mod_mkdirp(STREAMS_DB_DIR, next);
+			mod_mkdirp(self.f_stream_pos_db_dir, next);
 		},
 		function initdb(_, next) {
 			self.f_db = new mod_sqlite.Database(self.f_db_path);
@@ -202,7 +308,7 @@ MakoGcFeeder.prototype.state_init = function (S)
 					    'run at \'%s\'', self.f_start);
 				}
 
-				self.f_start = row['marker'] || BOTTOM;
+				self.f_start = row['marker'] || self.f_start;
 				next();
 			});
 		},
@@ -213,7 +319,7 @@ MakoGcFeeder.prototype.state_init = function (S)
 		 * /var/tmp/mako_gc_inputs/SHARD_URL/STORAGE_ID
 		 */
 		function createListingDirectories(_, next) {
-			mod_mkdirp([INSTRUCTIONS_DIR, self.f_shard].join('/'),
+			mod_mkdirp([self.f_instruction_list_dir, self.f_shard].join('/'),
 			    function (err) {
 				self.f_log.debug('Created local listing directories');
 				next(err);
@@ -241,7 +347,6 @@ MakoGcFeeder.prototype.state_init = function (S)
 			S.gotoState('done');
 			return;
 		}
-		self.updateMorayFilter();
 
 		self.f_log.debug('Finished initializing');
 
@@ -321,7 +426,7 @@ MakoGcFeeder.prototype.appendToListingFile = function (path)
 	var self = this;
 	var storage_id = extractStorageId(path);
 
-	var file = [INSTRUCTIONS_DIR, self.f_shard, storage_id].join('/');
+	var file = [self.f_instruction_list_dir, self.f_shard, storage_id].join('/');
 
 	/*
 	 * If this is the first time we're writing to this file, establish a
@@ -428,13 +533,20 @@ function main()
 		mod_assertplus.arrayOfObject(opts.shards, 'opts.shard');
 		mod_assertplus.string(opts.nameservice, 'opts.nameservice');
 		mod_assertplus.number(opts.batch_size, 'opts.batch_size');
+		mod_assertplus.string(opts.poseidon_uuid, 'opts.poseidon_uuid');
+		mod_assertplus.string(opts.instruction_list_dir, 'opts.instruction_list_dir');
+		mod_assertplus.string(opts.stream_pos_db_dir, 'opts.stream_pos_db_dir');
 
 		opts.shards.forEach(function (shard) {
 			mod_assertplus.string(shard.host, 'shard.host');
 			var options = {
 				batch_size: opts.batch_size,
+				sapi_url: opts.sapi_url,
 				shard_domain: shard.host,
-				nameservice: opts.nameservice
+				nameservice: opts.nameservice,
+				poseidon_uuid: opts.poseidon_uuid,
+				instruction_list_dir: opts.instruction_list_dir,
+				stream_pos_db_dir: opts.stream_pos_db_dir
 			};
 			feeders[shard.host] = new MakoGcFeeder(options);
 		});
