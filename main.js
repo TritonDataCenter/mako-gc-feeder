@@ -14,6 +14,7 @@ var mod_fsm = require('mooremachine');
 var mod_bunyan = require('bunyan');
 var mod_mkdirp = require('mkdirp');
 var mod_moray = require('moray');
+var mod_getopt = require('posix-getopt');
 var mod_morayfilter = require('moray-filter');
 var mod_sdc = require('sdc-clients');
 var mod_path = require('path');
@@ -439,6 +440,21 @@ function main()
 	var opts;
 	var file = mod_path.join('etc', 'config.json');
 	var feeders = {};
+
+	var option;
+	var parser = mod_getopt.BasicParser('f(file)');
+
+	while ((option = parser.getopt()) !== undefined) {
+		switch (option.option) {
+		case 'f':
+			file = option.optarg;
+			break;
+		default:
+			mod_assertplus.equal('?', option.option);
+			process.exit(1);
+			break;
+		}
+	}
 
 	LOG = mod_bunyan.createLogger({
 	    name: 'Main',
