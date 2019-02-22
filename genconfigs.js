@@ -69,7 +69,7 @@ function main()
 
 			for (i = 0; i < cfgs.length; i++) {
 				var json = JSON.stringify(cfgs[i]);
-				var cfgfile = mod_path.join('etc', 'config-' + i + '.json');
+				var cfgfile = mod_path.join('etc', 'config-mako-gc-feeder-' + i + '.json');
 				mod_fs.writeFileSync(cfgfile, json);
 			}
 		});
