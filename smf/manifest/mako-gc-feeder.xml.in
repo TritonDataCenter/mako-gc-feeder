@@ -11,7 +11,7 @@
 -->
 
 <service_bundle type="manifest" name="mako-gc-feeder">
-    <service name="manta/application/muskie" type="service" version="1">
+    <service name="manta/application/mako_gc_feeder" type="service" version="1">
 
 	<create_default_instance enabled="false" />
 	<single_instance />
@@ -73,7 +73,7 @@
                      timeout_seconds="30" />
 
         <instance name="@@MAKO_GC_FEEDER_INSTANCE_NAME@@" enabled="true">
-	    <property_group name="muskie" type="application">
+	    <property_group name="mako_gc_feeder" type="application">
 		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
             </property_group>
 	</instance>
