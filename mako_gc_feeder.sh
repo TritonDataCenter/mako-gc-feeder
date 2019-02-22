@@ -21,6 +21,20 @@ ZONES_STORAGEIDS="/var/tmp/storage_zones.txt"
 
 # Clear the staging area
 
+which manta-oneach &>/dev/null
+if [ $? == 1 ];
+then
+	echo "Could not find `manta-oneach`"
+	exit 1
+fi;
+
+which manta-adm &> /dev/null
+if [ $? == 1 ];
+then
+	echo "Could not find `manta-adm`"
+	exit 1
+fi;
+
 manta-oneach -s storage "mkdir -p ${REMOTE_INSTR_OBJ_DIR}"
 
 if [ ! -f ${ZONES_STORAGEIDS} ];
@@ -33,10 +47,13 @@ do
 	for STORAGE_ID in $(ls "${INSTR_OBJ_DIR}/${SHARD}");
 	do
 		LISTING="${INSTR_OBJ_DIR}/${SHARD}/${STORAGE_ID}"
+		MOVED="$LISTING-$(zonename)-$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+		mv "$LISTING" "$MOVED"
 
 		ZONE="$(grep "${STORAGE_ID}" ${ZONES_STORAGEIDS} | \
 		    awk '{print $2}')"
 
-		manta-oneach -z ${ZONE} -d ${REMOTE_INSTR_OBJ_DIR} -g ${LISTING}
+		manta-oneach -z ${ZONE} -d ${REMOTE_INSTR_OBJ_DIR} -g ${MOVED}
 	done;
 done;
