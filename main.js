@@ -49,7 +49,7 @@ function MakoGcFeeder(opts)
 	this.f_poseidon_uuid = opts.poseidon_uuid;
 	this.f_lastFindObjects = null;
 
-	this.f_log = opts.log.child({ component: 'MakoGcFeeder-' + opts.shard });
+	this.f_log = opts.log.child({ component: 'MakoGcFeeder-' + opts.shard_domain });
 
 	this.f_shard = opts.shard_domain;
 	this.f_nameservice = opts.nameservice;
@@ -270,7 +270,8 @@ MakoGcFeeder.prototype.state_running = function (S)
 		 * still receive one more record if we try restarting the
 		 * process.
 		 */
-		if (self.f_numLastSeen === 1 && self.f_batch_size > 1) {
+		if (self.f_numLastSeen === 0 && self.f_numLastSeen === 1 &&
+		    self.f_batch_size > 1) {
 			S.gotoState('done');
 			return;
 		}
@@ -357,7 +358,7 @@ MakoGcFeeder.prototype.appendToListingFile = function (path)
 		});
 	}
 
-	if (self.f_prev !== null && self.f_start !== self.f_prev) {
+	if (self.f_prev == null || self.f_start !== self.f_prev) {
 		self.f_filestreams[storage_id].stream.write(path + '\n');
 		self.f_numwritten++;
 	}
@@ -446,7 +447,7 @@ function main()
 
 	LOG = mod_bunyan.createLogger({
 	    name: 'Main',
-	    level: process.LOG_LEVEL || 'info'
+	    level: process.env.LOG_LEVEL || 'info'
 	});
 
 	mod_fs.readFile(file, function (err, data) {
