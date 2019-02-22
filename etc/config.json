@@ -1,9 +1,0 @@
-{
-    "batch_size": 10000,
-    "sapi_url": "http://sapi.coal-1.example.com",
-    "nameservice": "nameservice.orbit.example.com",
-    "shards": [],
-    "poseidon_uuid": "ff30b6ca-566a-e73e-9b74-911b9fe9db45",
-    "instruction_list_dir": "/var/tmp/mako_gc_instructions",
-    "stream_pos_db_dir": "/var/tmp/mako_gc_streams_dbs"
-}

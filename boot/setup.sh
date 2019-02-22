@@ -21,9 +21,6 @@ PROFILE=/root/.bashrc
 SVC_ROOT=/opt/smartdc/mako-gc-feeder
 NODE_BIN=$SVC_ROOT/build/node/bin
 
-source ${DIR}/scripts/util.sh
-source ${DIR}/scripts/services.sh
-
 export PATH=$SVC_ROOT/build/node/bin:$SVC_ROOT/node_modules/.bin:/opt/local/bin:/usr/sbin:/usr/bin:$PATH
 
 function wait_for_resolv_conf {
@@ -48,7 +45,6 @@ function wait_for_resolv_conf {
 
 function manta_setup_mako_gc_feeder {
     local num_instances=30
-    local size=`json -f ${METADATA} SIZE`
 
     pushd .
 

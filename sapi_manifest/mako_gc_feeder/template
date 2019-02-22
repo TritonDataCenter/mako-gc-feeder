@@ -1,9 +1,0 @@
-{
-    "batch_size": {{#MAKO_GC_FEEDER_BATCH_SIZE}}{{MAKO_GC_FEEDER_BATCH_SIZE}}{{/MAKO_GC_FEEDER_BATCH_SIZE}}{{^MAKO_GC_FEEDER_BATCH_SIZE}}10000{{/MAKO_GC_FEEDER_BATCH_SIZE}},
-    "sapi_url": "{{{SAPI_URL}}}",
-    "nameservice": "nameservice.{{{DOMAIN_NAME}}}",
-    "shards": [],
-    "poseidon_uuid": "{{POSEIDON_UUID}}",
-    "instruction_list_dir": "/var/tmp/mako_gc_instructions",
-    "stream_pos_db_dir": "/var/tmp/mako_gc_streams_dbs"
-}
