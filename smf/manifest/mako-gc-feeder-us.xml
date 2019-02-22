@@ -36,9 +36,9 @@
 
 	<exec_method type="method"
 		     name="start"
-			 exec="node --abort-on-uncaught-exception main.js -f etc/config-%i.json &amp;"
+			 exec="/root/mako-gc-feeder-current/tools/node-v4.8.4/node --abort-on-uncaught-exception main.js -f etc/config-%i.json &amp;"
 		     timeout_seconds="30">
-		<method_context working_directory="/opt/smartdc/mako-gc-feeder" />
+		<method_context working_directory="/root/mako-gc-feeder-current" />
 	</exec_method>
 
 	<exec_method type="method"
@@ -46,18 +46,18 @@
 		     exec=":kill"
 		     timeout_seconds="30" />
 
-        <instance name="mako-gc-feeder-0"  enabled="true" />
-        <instance name="mako-gc-feeder-1"  enabled="true" />
-        <instance name="mako-gc-feeder-2"  enabled="true" />
-        <instance name="mako-gc-feeder-3"  enabled="true" />
-        <instance name="mako-gc-feeder-4"  enabled="true" />
-        <instance name="mako-gc-feeder-5"  enabled="true" />
-        <instance name="mako-gc-feeder-6"  enabled="true" />
-        <instance name="mako-gc-feeder-7"  enabled="true" />
-        <instance name="mako-gc-feeder-8"  enabled="true" />
-        <instance name="mako-gc-feeder-9"  enabled="true" />
-        <instance name="mako-gc-feeder-10" enabled="true" />
-        <instance name="mako-gc-feeder-11" enabled="true" />
+        <instance name="mako-gc-feeder-0"  enabled="false" />
+        <instance name="mako-gc-feeder-1"  enabled="false" />
+        <instance name="mako-gc-feeder-2"  enabled="false" />
+        <instance name="mako-gc-feeder-3"  enabled="false" />
+        <instance name="mako-gc-feeder-4"  enabled="false" />
+        <instance name="mako-gc-feeder-5"  enabled="false" />
+        <instance name="mako-gc-feeder-6"  enabled="false" />
+        <instance name="mako-gc-feeder-7"  enabled="false" />
+        <instance name="mako-gc-feeder-8"  enabled="false" />
+        <instance name="mako-gc-feeder-9"  enabled="false" />
+        <instance name="mako-gc-feeder-10" enabled="false" />
+        <instance name="mako-gc-feeder-11" enabled="false" />
 
 	<stability value='Unstable' />
 
