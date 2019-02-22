@@ -13,9 +13,6 @@
 <service_bundle type="manifest" name="mako-gc-feeder">
     <service name="manta/application/mako_gc_feeder" type="service" version="1">
 
-	<create_default_instance enabled="false" />
-	<single_instance />
-
 	<dependency name="network"
 		    grouping="require_all"
 		    restart_on="error"
@@ -37,40 +34,17 @@
 	    <service_fmri value="svc:/smartdc/mdata:execute" />
 	</dependency>
 
-    <dependency name="config-agent"
-                grouping="optional_all"
-                restart_on="none"
-                type="service">
-        <service_fmri value="svc:/smartdc/application/config-agent" />
-    </dependency>
-
 	<exec_method type="method"
 		     name="start"
 			 exec="node --abort-on-uncaught-exception main.js -f etc/config-${index}.json &amp;"
 		     timeout_seconds="30">
-	    <method_context working_directory="/opt/smartdc/mako-gc-feeder">
-                <method_credential user="nobody"
-                                   group="nobody"
-                                   privileges="basic,net_privaddr"/>
-                <method_environment>
-                    <envvar name="PATH"
-                            value="/opt/smartdc/mako-gc-feeder/build/node/bin:/opt/local/bin:/usr/bin:/usr/sbin:/bin"/>
-                    <envvar name="LD_PRELOAD_32"
-                            value="/usr/lib/extendedFILE.so.1" />
-                    <envvar name="NODE_NDEBUG" value="1" />
-				</method_environment>
-		</method_context>
+		<method_context working_directory="/opt/smartdc/mako-gc-feeder" />
 	</exec_method>
 
 	<exec_method type="method"
 		     name="stop"
 		     exec=":kill"
 		     timeout_seconds="30" />
-
-        <exec_method type="method"
-                     name="refresh"
-                     exec=":kill -HUP"
-                     timeout_seconds="30" />
 
         <instance name="@@MAKO_GC_FEEDER_INSTANCE_NAME@@" enabled="true">
 	    <property_group name="mako_gc_feeder" type="application">
