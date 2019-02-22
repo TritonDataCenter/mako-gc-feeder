@@ -270,7 +270,7 @@ MakoGcFeeder.prototype.state_running = function (S)
 		 * still receive one more record if we try restarting the
 		 * process.
 		 */
-		if (self.f_numLastSeen === 0 && self.f_numLastSeen === 1 &&
+		if (self.f_numLastSeen === 0 || self.f_numLastSeen === 1 &&
 		    self.f_batch_size > 1) {
 			S.gotoState('done');
 			return;
@@ -302,11 +302,6 @@ MakoGcFeeder.prototype.state_done = function (S)
 		 * Close stream position database.
 		 */
 		self.f_db.close();
-
-		if (self.f_lastErr) {
-			process.exit(1);
-		}
-		process.exit(0);
 	});
 };
 
