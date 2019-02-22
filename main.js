@@ -442,7 +442,7 @@ function main()
 	var feeders = {};
 
 	var option;
-	var parser = mod_getopt.BasicParser('f(file)');
+	var parser = new mod_getopt.BasicParser('f:(file)', process.argv);
 
 	while ((option = parser.getopt()) !== undefined) {
 		switch (option.option) {

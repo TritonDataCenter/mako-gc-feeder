@@ -10,9 +10,6 @@ Manta deployment with 2 index shards and 3 storage nodes.
 var/
     tmp/
 	1.moray.orbit.example.com/
-	    1.stor.orbit.example.com
-	    2.stor.orbit.example.com
-	    3.stor.orbit.example.com
         2.moray.orbit.example.com/
 	    1.stor.orbit.example.com
 	    2.stor.orbit.example.com
@@ -64,10 +61,12 @@ $ npm install
 
 ## Running
 
-The mako-gc-feeder is resumable, and its stream position is stored in a local
-sqlite database created in the directory from which it is run called
-`mako_gc_feeder.db`.
-
+Generate configs for n processes:
 ```
-node main.js
+node genconfigs.js n
+```
+
+Run a process:
+```
+node main.js [-f CONFIG_FILE | etc/config.json]
 ```
