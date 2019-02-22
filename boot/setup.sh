@@ -47,19 +47,23 @@ function wait_for_resolv_conf {
 
 
 function manta_setup_mako_gc_feeder {
-    local num_instances=1
+    local num_instances=30
     local size=`json -f ${METADATA} SIZE`
-    num_instances=30
+
+    pushd .
+
+    cd $SVC_ROOT 
 
     $NODE_BIN/node $SVC_ROOT/genconfigs.js $num_instances
+
+    popd
 
     #To preserve whitespace in echo commands...
     IFS='%'
 
-    #muskie instances
     local mako_gc_feeder_xml_in=$SVC_ROOT/smf/manifests/mako-gc-feeder.xml.in
     for (( i=0; i<$num_instances; i++ )); do
-        local mako_gc_feeder_instance="mako-gc-feeder-${ports[i]}"
+        local mako_gc_feeder_instance="mako-gc-feeder-${i}"
         local mako_gc_feeder_xml_out=$SVC_ROOT/smf/manifests/mako-gc-feeder-${i}.xml
         sed -e "s#@@MAKO_GC_FEEDER_INSTANCE_NUM@@#${i}#g" \
             -e "s#@@MAKO_GC_FEEDER_INSTANCE_NAME@@#${mako_gc_feeder_instance}#g" \
