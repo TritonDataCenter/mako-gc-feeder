@@ -36,7 +36,7 @@
 
 	<exec_method type="method"
 		     name="start"
-			 exec="node --abort-on-uncaught-exception main.js -f etc/config-${index}.json &amp;"
+			 exec="node --abort-on-uncaught-exception main.js -f etc/config-%i.json &amp;"
 		     timeout_seconds="30">
 		<method_context working_directory="/opt/smartdc/mako-gc-feeder" />
 	</exec_method>
@@ -46,77 +46,18 @@
 		     exec=":kill"
 		     timeout_seconds="30" />
 
-        <instance name="mako-gc-feeder-1" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
-
-        <instance name="mako-gc-feeder-2" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
-
-        <instance name="mako-gc-feeder-3" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
-
-        <instance name="mako-gc-feeder-4" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
-
-        <instance name="mako-gc-feeder-5" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
-
-        <instance name="mako-gc-feeder-6" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
-
-        <instance name="mako-gc-feeder-7" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
-
-        <instance name="mako-gc-feeder-8" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
-
-        <instance name="mako-gc-feeder-9" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
-
-        <instance name="mako-gc-feeder-10" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
-
-        <instance name="mako-gc-feeder-11" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
-
-        <instance name="mako-gc-feeder-12" enabled="true">
-	    <property_group name="mako_gc_feeder" type="application">
-		<propval name="index" type="count" value="@@MAKO_GC_FEEDER_INSTANCE_NUM@@" />
-            </property_group>
-	</instance>
+        <instance name="mako-gc-feeder-0"  enabled="true" />
+        <instance name="mako-gc-feeder-1"  enabled="true" />
+        <instance name="mako-gc-feeder-2"  enabled="true" />
+        <instance name="mako-gc-feeder-3"  enabled="true" />
+        <instance name="mako-gc-feeder-4"  enabled="true" />
+        <instance name="mako-gc-feeder-5"  enabled="true" />
+        <instance name="mako-gc-feeder-6"  enabled="true" />
+        <instance name="mako-gc-feeder-7"  enabled="true" />
+        <instance name="mako-gc-feeder-8"  enabled="true" />
+        <instance name="mako-gc-feeder-9"  enabled="true" />
+        <instance name="mako-gc-feeder-10" enabled="true" />
+        <instance name="mako-gc-feeder-11" enabled="true" />
 
 	<stability value='Unstable' />
 
