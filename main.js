@@ -270,11 +270,16 @@ MakoGcFeeder.prototype.state_running = function (S)
 		 * entire range of instruction objects on a shard, we'll always
 		 * still receive one more record if we try restarting the
 		 * process.
+		 *
+		 * If `err` is not undefined here, we have already logged it in
+		 * `readChunk`.
 		 */
-		if (self.f_numLastSeen === 0 || self.f_numLastSeen === 1 &&
-		    self.f_batch_size > 1) {
-			S.gotoState('done');
-			return;
+		if (!err) {
+			if (self.f_numLastSeen === 0 || (self.f_numLastSeen === 1 &&
+			    self.f_batch_size > 1)) {
+				S.gotoState('done');
+				return;
+			}
 		}
 		setTimeout(function () {
 			S.gotoState('running');
