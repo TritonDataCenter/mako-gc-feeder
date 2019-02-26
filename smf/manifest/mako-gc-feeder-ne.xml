@@ -36,7 +36,7 @@
 
         <exec_method type="method"
                      name="start"
-                         exec="/root/mako-gc-feeder-current/tools/node-v4.8.4/node --abort-on-uncaught-exception main.js -f etc/config-%i.json &amp;"
+		     exec="/root/mako-gc-feeder-current/tools/node/bin/node --abort-on-uncaught-exception main.js -f etc/config-%i.json &amp;"
                      timeout_seconds="30">
                 <method_context working_directory="/root/mako-gc-feeder-current" />
         </exec_method>
