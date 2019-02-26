@@ -321,6 +321,19 @@ function extractStorageId(path)
 	return (path.split('/')[INSTRUCTION_OBJECT_NUM_COMPONENTS - 1]);
 }
 
+function unresolvePath(path)
+{
+	var components = path.split('/');
+
+	/*
+	 * All paths have a leading '/', so poseidon's uuid will appear at index
+	 * 1 in this array.
+	 */
+	components[1] = 'poseidon';
+
+	return (components.join('/'));
+}
+
 MakoGcFeeder.prototype.checkpoint = function ()
 {
 	var self = this;
@@ -332,6 +345,8 @@ MakoGcFeeder.prototype.appendToListingFile = function (path)
 {
 	var self = this;
 	var storage_id = extractStorageId(path);
+
+	var unresolvedPath = unresolvePath(path);
 
 	var file = [self.f_instruction_list_dir, self.f_shard, storage_id].join('/');
 
@@ -360,7 +375,7 @@ MakoGcFeeder.prototype.appendToListingFile = function (path)
 	}
 
 	if (self.f_prev == null || self.f_start !== self.f_prev) {
-		self.f_filestreams[storage_id].stream.write(path + '\n');
+		self.f_filestreams[storage_id].stream.write(unresolvedPath + '\n');
 		self.f_numwritten++;
 	}
 
@@ -369,7 +384,8 @@ MakoGcFeeder.prototype.appendToListingFile = function (path)
 	 */
 	self.f_prev = self.f_start;
 	/*
-	 * Advance our marker.
+	 * Advance our marker. Note that we advanced to the 'resolved' path (the
+	 * one with poseidon's uuid and not login).
 	 */
 	self.f_start = path;
 };
@@ -590,14 +606,18 @@ function main()
 				 * shard as the instruction objects are.
 				 */
 				arg.start = ['', arg.poseidon_uuid, 'stor',
-				    'manta_gc', 'mako', arg.storage_id_start, ''].join('/');
+				    'manta_gc', 'mako', ''].join('/');
+
+				var storage_id_upper = arg.storage_id_end.split('.');
+				storage_id_upper[0] = '~'.repeat(Buffer.byteLength(storage_id_upper[0]));
+
 				/*
 				 * The ASCII '~' compares greater than or equal to any
 				 * other ASCII character under PostgreSQL's lexical
 				 * comparison operator.
 				 */
 				arg.end = ['', arg.poseidon_uuid, 'stor',
-				    'manta_gc', 'mako', arg.storage_id_end,
+				    'manta_gc', 'mako', storage_id_upper.join('.'),
 				    '~'.repeat(INSTRUCTION_OBJECT_NAME_BYTE_LENGTH)].join('/');
 
 				next();
