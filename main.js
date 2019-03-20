@@ -23,12 +23,18 @@ var mod_util = require('util');
 var mod_vasync = require('vasync');
 var mod_verror = require('verror');
 
+var restify = require('restify');
+var createMetricsManager = require('triton-metrics').createMetricsManager;
+var METRIC_LINES_READ = 'feeder_lines_read';
+var METRIC_LINES_WRITTEN = 'feeder_lines_written';
+
 var VError = mod_verror.VError;
 
 var LOG;
 var DEFAULT_BATCH_SIZE = 10000;
 var INSTRUCTION_OBJECT_NAME_BYTE_LENGTH = 135;
 var INSTRUCTION_OBJECT_NUM_COMPONENTS = 6;
+
 
 function MakoGcFeeder(opts)
 {
@@ -44,6 +50,7 @@ function MakoGcFeeder(opts)
 	mod_assertplus.string(opts.poseidon_uuid, 'opts.poseidon_uuid');
 	mod_assertplus.string(opts.instruction_list_dir, 'opts.instruction_list_dir');
 	mod_assertplus.string(opts.stream_pos_db_dir, 'opts.stream_pos_db_dir');
+	mod_assertplus.object(opts.collector, 'opts.collector');
 
 	this.f_instruction_list_dir = opts.instruction_list_dir;
 	this.f_stream_pos_db_dir = opts.stream_pos_db_dir;
@@ -55,6 +62,7 @@ function MakoGcFeeder(opts)
 	this.f_shard = opts.shard_domain;
 	this.f_nameservice = opts.nameservice;
 	this.f_batch_size = opts.batch_size || DEFAULT_BATCH_SIZE;
+	this.f_collector = opts.collector;
 
 	/*
 	 * Moray client used by this feeder. Each has exactly one.
@@ -350,6 +358,11 @@ MakoGcFeeder.prototype.appendToListingFile = function (path)
 
 	var file = [self.f_instruction_list_dir, self.f_shard, storage_id].join('/');
 
+	var read_counter = self.f_collector.getCollector(METRIC_LINES_READ);
+	var write_counter = self.f_collector.getCollector(METRIC_LINES_WRITTEN);
+
+	read_counter.increment({ shard: self.f_shard });
+
 	/*
 	 * If this is the first time we're writing to this file, establish a
 	 * write stream.
@@ -377,6 +390,7 @@ MakoGcFeeder.prototype.appendToListingFile = function (path)
 	if (self.f_prev == null || self.f_start !== self.f_prev) {
 		self.f_filestreams[storage_id].stream.write(unresolvedPath + '\n');
 		self.f_numwritten++;
+		write_counter.increment({ mako: storage_id });
 	}
 
 	/*
@@ -499,7 +513,40 @@ function main()
 		mod_assertplus.string(opts.instruction_list_dir, 'opts.instruction_list_dir');
 		mod_assertplus.string(opts.stream_pos_db_dir, 'opts.stream_pos_db_dir');
 
+		mod_assertplus.string(opts.datacenterName, 'opts.datacenterName');
+		mod_assertplus.string(opts.instance_uuid, 'opts.intannce_uuid');
+		mod_assertplus.string(opts.server_uuid, 'opts.server_uuid');
+		mod_assertplus.string(opts.service_name, 'opts.service_name');
+		mod_assertplus.number(opts.port, 'opts.port');
+
 		opts.log = LOG;
+
+		var metricsManager = createMetricsManager({
+			address: '0.0.0.0',
+			log: LOG,
+			staticLabels: {
+				datacenter: opts.datacenterName,
+				instance: opts.instance_uuid,
+				server: opts.server_uuid,
+				service: opts.service_name,
+				port: opts.port
+			},
+			port: opts.port + 1000,
+			restify: restify
+		});
+		metricsManager.listen(function() {});
+
+		metricsManager.collector.counter({
+			name: METRIC_LINES_READ,
+			help: 'Count of lines read from a given shard'
+		});
+
+		metricsManager.collector.counter({
+			name: METRIC_LINES_WRITTEN,
+			help: 'Count of lines recorded for a storage node'
+		});
+
+		opts.collector = metricsManager.collector;
 
 		/*
 		 * SAPI client to determine the range of storage ids we're listing
@@ -642,7 +689,8 @@ function main()
 					start: opts.start,
 					end: opts.end,
 					instruction_list_dir: opts.instruction_list_dir,
-					stream_pos_db_dir: opts.stream_pos_db_dir
+					stream_pos_db_dir: opts.stream_pos_db_dir,
+					collector: opts.collector
 				};
 				feeders[shard.host] = new MakoGcFeeder(options);
 			});
