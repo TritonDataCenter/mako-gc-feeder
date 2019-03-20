@@ -35,6 +35,14 @@ var DEFAULT_BATCH_SIZE = 10000;
 var INSTRUCTION_OBJECT_NAME_BYTE_LENGTH = 135;
 var INSTRUCTION_OBJECT_NUM_COMPONENTS = 6;
 
+/*
+ * Total number of shards that this feeder is scanning.  The value will be
+ * initialized based on the contents of the options passed to main.js.  Each
+ * time we finish a given shard, we will decrement the counter.  When the
+ * value is 0, the feeder is completely done.
+ */
+var total_shards = 0;
+var feeder_start_time = new Date();
 
 function MakoGcFeeder(opts)
 {
@@ -50,10 +58,14 @@ function MakoGcFeeder(opts)
 	mod_assertplus.string(opts.poseidon_uuid, 'opts.poseidon_uuid');
 	mod_assertplus.string(opts.instruction_list_dir, 'opts.instruction_list_dir');
 	mod_assertplus.string(opts.stream_pos_db_dir, 'opts.stream_pos_db_dir');
+	mod_assertplus.object(opts.feeder_status, 'opts.feeder_status');
 	mod_assertplus.object(opts.collector, 'opts.collector');
+	mod_assertplus.number(opts.feeder_num, 'opts.feeder_num');
 
 	this.f_instruction_list_dir = opts.instruction_list_dir;
 	this.f_stream_pos_db_dir = opts.stream_pos_db_dir;
+	this.f_feeder_status = opts.feeder_status;
+	this.f_feeder_num = opts.feeder_num;
 	this.f_poseidon_uuid = opts.poseidon_uuid;
 	this.f_lastFindObjects = null;
 
@@ -317,6 +329,18 @@ MakoGcFeeder.prototype.state_done = function (S)
 		 */
 		self.f_db.close();
 	});
+
+	total_shards--;
+	if (total_shards === 0) {
+		/*
+		 * Write out a file with the current time that we finished
+		 * scanning this shard.
+		 */
+		var now = new Date();
+		var scan_time = now - feeder_start_time;
+		self.f_feeder_status.write(now  + ': Feeder ' +
+		    self.f_feeder_num + ' finished  (' + scan_time +')\n');
+	}
 };
 
 /*
@@ -512,12 +536,14 @@ function main()
 		mod_assertplus.string(opts.poseidon_uuid, 'opts.poseidon_uuid');
 		mod_assertplus.string(opts.instruction_list_dir, 'opts.instruction_list_dir');
 		mod_assertplus.string(opts.stream_pos_db_dir, 'opts.stream_pos_db_dir');
+		mod_assertplus.string(opts.feeder_status_dir, 'opts.feeder_status_dir');
 
 		mod_assertplus.string(opts.datacenterName, 'opts.datacenterName');
 		mod_assertplus.string(opts.instance_uuid, 'opts.intannce_uuid');
 		mod_assertplus.string(opts.server_uuid, 'opts.server_uuid');
 		mod_assertplus.string(opts.service_name, 'opts.service_name');
 		mod_assertplus.number(opts.port, 'opts.port');
+		mod_assertplus.number(opts.feeder_num, 'opts.feeder_num');
 
 		opts.log = LOG;
 
@@ -531,7 +557,7 @@ function main()
 				service: opts.service_name,
 				port: opts.port
 			},
-			port: opts.port + 1000,
+			port: opts.port + 1000 + opts.feeder_num,
 			restify: restify
 		});
 		metricsManager.listen(function() {});
@@ -547,6 +573,26 @@ function main()
 		});
 
 		opts.collector = metricsManager.collector;
+
+		/*
+		 * Create feeder status direcrory.
+		 */
+		mod_mkdirp(opts.feeder_status_dir, function (err) {
+			opts.log.debug('Created feeder progress directory');
+		});
+
+		opts.feeder_status = mod_fs.createWriteStream(
+		    [opts.feeder_status_dir, 'feeder_status'].join('/'), {
+			flags: 'a'
+		});
+
+		opts.feeder_status.on('error', function (err) {
+			opts.log.error('Error writing to \'%s\', \'%s\'',
+			    'feeder_status', err);
+		});
+
+		opts.feeder_status.write(new Date() + ': Feeder ' +
+		    opts.feeder_num + ' started\n');
 
 		/*
 		 * SAPI client to determine the range of storage ids we're listing
@@ -677,6 +723,8 @@ function main()
 			mod_assertplus.string(opts.start, 'opts.start');
 			mod_assertplus.string(opts.end, 'opts.end');
 
+			total_shards = opts.shards.length;
+
 			opts.shards.forEach(function (shard) {
 				mod_assertplus.string(shard.host, 'shard.host');
 				var options = {
@@ -690,7 +738,9 @@ function main()
 					end: opts.end,
 					instruction_list_dir: opts.instruction_list_dir,
 					stream_pos_db_dir: opts.stream_pos_db_dir,
-					collector: opts.collector
+					collector: opts.collector,
+					feeder_status: opts.feeder_status,
+					feeder_num: opts.feeder_num
 				};
 				feeders[shard.host] = new MakoGcFeeder(options);
 			});
